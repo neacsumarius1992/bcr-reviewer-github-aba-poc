@@ -91,6 +91,14 @@ jobs:
                 `modules/${moduleName}/1.0.0/MODULE.bazel`,
                 `module(name = "${moduleName}", version = "1.0.0")\n`,
               ));
+              // Reset artifacts left by a previous PoC run so benign B adds a
+              // real version directory on every fresh reproduction.
+              baseEntries.push({
+                path: `modules/${moduleName}/1.0.1/MODULE.bazel`,
+                mode: '100644',
+                type: 'blob',
+                sha: null,
+              });
             }
 
             const baseTree = await github.rest.git.createTree({
