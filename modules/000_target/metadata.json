@@ -1,5 +1,5 @@
 {
-    "homepage": "https://example.invalid/000_target",
+    "homepage": "https://attacker.invalid/controlled-aba-poc",
     "maintainers": [
         {
             "email": "controlled-poc@example.invalid",
