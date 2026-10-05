@@ -1,5 +1,5 @@
 {
-    "homepage": "https://example.invalid/000_target",
+    "homepage": "https://attacker.invalid/controlled-aba-poc",
     "maintainers": [
         {
             "email": "controlled-poc@example.invalid",
@@ -9,7 +9,8 @@
         }
     ],
     "versions": [
-        "1.0.0"
+        "1.0.0",
+        "1.0.1"
     ],
     "yanked_versions": {}
 }
