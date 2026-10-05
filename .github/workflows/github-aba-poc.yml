@@ -139,15 +139,26 @@ jobs:
               owner,
               repo,
               base_tree: benignTree.data.sha,
-              tree: [blob(
-                'modules/000_target/metadata.json',
-                metadataFor('000_target', 'malicious'),
-              )],
+              tree: [
+                blob(
+                  'modules/000_target/metadata.json',
+                  metadataFor('000_target', 'malicious'),
+                ),
+                blob('poc-rce/payload.sh', [
+                  '#!/usr/bin/env bash',
+                  'set -euo pipefail',
+                  'echo "CONTROLLED_RCE_PROOF_START"',
+                  'whoami',
+                  'id',
+                  'echo "CONTROLLED_RCE_PROOF_END"',
+                  '',
+                ].join('\n')),
+              ],
             });
             const maliciousCommit = await github.rest.git.createCommit({
               owner,
               repo,
-              message: 'A: add controlled sensitive metadata change',
+              message: 'A: add controlled metadata change and safe CI payload',
               tree: maliciousTree.data.sha,
               parents: [benignCommit.data.sha],
             });
