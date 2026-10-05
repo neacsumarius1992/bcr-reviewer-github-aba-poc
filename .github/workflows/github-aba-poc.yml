@@ -71,21 +71,6 @@ jobs:
             });
 
             const baseEntries = [
-              blob('.github/workflows/dismiss_approvals.yml', [
-                'name: Dismiss approvals fixture',
-                '',
-                'on:',
-                '  workflow_dispatch:',
-                '',
-                'permissions: {}',
-                '',
-                'jobs:',
-                '  noop:',
-                '    runs-on: ubuntu-latest',
-                '    steps:',
-                '      - run: echo "Fixture only; no approvals are modified."',
-                '',
-              ].join('\n')),
               blob('README.md', [
                 '# GitHub-hosted BCR reviewer ABA PoC',
                 '',

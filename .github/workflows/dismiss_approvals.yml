@@ -1,0 +1,12 @@
+name: Dismiss approvals fixture
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Fixture only; no approvals are modified."
