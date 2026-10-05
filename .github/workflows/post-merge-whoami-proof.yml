@@ -1,0 +1,22 @@
+name: Post-merge controlled whoami proof
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - poc-rce/payload.sh
+
+permissions:
+  contents: read
+
+jobs:
+  controlled-proof:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the merged revision
+        uses: actions/checkout@v4
+
+      - name: Execute the merged low-impact payload
+        shell: bash
+        run: bash ./poc-rce/payload.sh
