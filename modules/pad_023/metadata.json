@@ -1,0 +1,15 @@
+{
+    "homepage": "https://example.invalid/pad_023",
+    "maintainers": [
+        {
+            "email": "controlled-poc@example.invalid",
+            "github": "neacsumarius1992",
+            "github_user_id": 62901364,
+            "name": "Controlled PoC maintainer"
+        }
+    ],
+    "versions": [
+        "1.0.0"
+    ],
+    "yanked_versions": {}
+}
