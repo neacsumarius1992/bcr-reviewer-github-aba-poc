@@ -2,10 +2,10 @@
     "homepage": "https://example.invalid/victim_e2e",
     "maintainers": [
         {
-            "email": "controlled-victim@example.invalid",
-            "github": "github-actions[bot]",
-            "github_user_id": 41898282,
-            "name": "Synthetic original victim maintainer"
+            "email": "controlled-poc@example.invalid",
+            "github": "neacsumarius1992",
+            "github_user_id": 62901364,
+            "name": "Controlled attacker identity"
         }
     ],
     "versions": [
