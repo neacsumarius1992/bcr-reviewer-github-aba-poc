@@ -1,0 +1,15 @@
+{
+    "homepage": "https://example.invalid/victim_control_e2e",
+    "maintainers": [
+        {
+            "email": "controlled-victim@example.invalid",
+            "github": "github-actions[bot]",
+            "github_user_id": 41898282,
+            "name": "Synthetic original victim maintainer"
+        }
+    ],
+    "versions": [
+        "1.0.0"
+    ],
+    "yanked_versions": {}
+}

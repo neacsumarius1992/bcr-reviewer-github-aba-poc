@@ -1,0 +1,15 @@
+{
+    "homepage": "https://example.invalid/owned_e2e",
+    "maintainers": [
+        {
+            "email": "controlled-poc@example.invalid",
+            "github": "neacsumarius1992",
+            "github_user_id": 62901364,
+            "name": "Controlled attacker identity"
+        }
+    ],
+    "versions": [
+        "1.0.0"
+    ],
+    "yanked_versions": {}
+}
