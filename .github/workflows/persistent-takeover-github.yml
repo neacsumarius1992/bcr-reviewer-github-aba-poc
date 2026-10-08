@@ -201,6 +201,19 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const moduleName = process.env.CONTROL_MODULE;
+            const openPulls = await github.rest.pulls.list({
+              owner, repo, state: 'open', per_page: 100,
+            });
+            const existingControl = openPulls.data.find(pr =>
+              pr.title === 'CONTROL: publication must be rejected before takeover' && !pr.draft
+            );
+            if (existingControl) {
+              core.exportVariable('CONTROL_PR', String(existingControl.number));
+              core.exportVariable('CONTROL_SHA', existingControl.head.sha);
+              core.notice(`Reusing CONTROL_PR=${existingControl.number}`);
+              core.notice(`Reusing CONTROL_SHA=${existingControl.head.sha}`);
+              return;
+            }
             const branch = `poc/control-before-takeover-${context.runId}`;
             const main = await github.rest.git.getRef({ owner, repo, ref: 'heads/main' });
             const mainCommit = await github.rest.git.getCommit({
@@ -256,6 +269,7 @@ jobs:
             });
 
       - name: Run exact BCR reviewer revision for the negative control
+        continue-on-error: true
         uses: bazelbuild/continuous-integration/actions/bcr-pr-reviewer@bd6a90eceb738c010fd1a9b472e8b6c894e6ea4e
         with:
           token: ${{ secrets.BCR_POC_PAT }}
