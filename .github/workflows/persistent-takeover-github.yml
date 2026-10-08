@@ -87,9 +87,6 @@ jobs:
                 metadata(process.env.CONTROL_MODULE, originalVictim, ['1.0.0'])),
               blob(`modules/${process.env.CONTROL_MODULE}/1.0.0/MODULE.bazel`,
                 moduleFile(process.env.CONTROL_MODULE, '1.0.0')),
-              { path: `modules/${process.env.OWNED_MODULE}/1.0.1/MODULE.bazel`, mode: '100644', type: 'blob', sha: null },
-              { path: `modules/${process.env.VICTIM_MODULE}/1.0.1/MODULE.bazel`, mode: '100644', type: 'blob', sha: null },
-              { path: `modules/${process.env.CONTROL_MODULE}/1.0.1/MODULE.bazel`, mode: '100644', type: 'blob', sha: null },
             ];
             const baselineTree = await github.rest.git.createTree({
               owner, repo, base_tree: mainCommit.data.tree.sha, tree: baselineEntries,
@@ -510,4 +507,3 @@ jobs:
             core.notice('MAIN now contains victim_e2e@1.0.1');
             core.notice('Authorization source: attacker identity persisted in victim_e2e metadata on main');
             core.notice('BCR_E2E_PUBLICATION_END');
-
